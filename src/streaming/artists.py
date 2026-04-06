@@ -23,3 +23,4 @@ class Artist:
     
     def add_album(self, album):
         self.albums.append(album)
+        
