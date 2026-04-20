@@ -19,9 +19,11 @@ class Album:
     def add_track(self, track):
         if track not in self.tracks:
             self.tracks.append(track)
-            
+            track.album = self
+            self.tracks.sort(key=lambda t: t.track_number)
+        
     def track_ids(self):
-        return [track.track_id for track in self.tracks]
+        return {track.track_id for track in self.tracks}
 
     def duration_seconds(self):
         return sum(track.duration_seconds for track in self.tracks)

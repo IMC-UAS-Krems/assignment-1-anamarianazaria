@@ -24,6 +24,14 @@ class Track:
     def duration_minutes(self):
         return self.duration_seconds / 60
     
+    def __eq__(self, other):
+        if not isinstance(other, Track):
+            return False
+        return self.track_id == other.track_id
+
+    def __hash__(self):
+        return hash(self.track_id)
+    
 class Song(Track):
     def __init__(self, track_id, title, duration_seconds, genre, artist):
         super().__init__(track_id, title, duration_seconds, genre)
@@ -36,26 +44,27 @@ class SingleRelease(Song):
         self.release_date = release_date
 
 class AlbumTrack(Song):
-    def __init__(self, track_id, title, duration_seconds, genre, artist, album, track_number):
+    def __init__(self, track_id, title, duration_seconds, genre, artist, track_number, album = None):
         super().__init__(track_id, title, duration_seconds, genre, artist)
         self.album = album
         self.track_number = track_number
-        album.add_track(self) 
+        if album is not None:
+            album.add_track(self) 
 
 class Podcast(Track):
-    def __init__(self, track_id, title, duration_seconds, genre, host, description):
+    def __init__(self, track_id, title, duration_seconds, genre, host, description = ""):
         super().__init__(track_id, title, duration_seconds, genre)
         self.host = host
         self.description = description
 
 class NarrativeEpisode(Podcast):
-    def __init__(self, track_id, title, duration_seconds, genre, host, description, season, episode_number):
+    def __init__(self, track_id, title, duration_seconds, genre, host, description = "", season = None, episode_number = None):
         super().__init__(track_id, title, duration_seconds, genre, host, description)
         self.season = season
         self.episode_number = episode_number
 
 class InterviewEpisode(Podcast):
-    def __init__(self, track_id, title, duration_seconds, genre, host, description, guest):
+    def __init__(self, track_id, title, duration_seconds, genre, host, description = "", guest = None):
         super().__init__(track_id, title, duration_seconds, genre, host, description)
         self.guest = guest
 

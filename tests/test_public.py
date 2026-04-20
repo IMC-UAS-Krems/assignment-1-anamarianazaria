@@ -18,11 +18,13 @@ Run with:
 """
 
 import pytest
+import math
 from datetime import datetime, timedelta
 
 from streaming.platform import StreamingPlatform
 from streaming.users import FreeUser, PremiumUser, FamilyAccountUser, FamilyMember
-from streaming.playlists import CollaborativePlaylist
+from streaming.playlists import CollaborativePlaylist, Playlist
+from streaming.tracks import Song
 from tests.conftest import FIXED_NOW, RECENT, OLD
 
 
@@ -54,8 +56,23 @@ class TestTotalListeningTime:
 
     # TODO: Add a test that verifies the correct value for a known time period.
     #       Calculate the expected total based on the fixture data in conftest.py.
+    
     def test_known_period_value(self, platform: StreamingPlatform) -> None:
-        pass
+        start = RECENT - timedelta(hours=1)
+        end = FIXED_NOW
+
+        # compute expected value directly from fixture sessions
+        expected_seconds = sum(
+            s.duration_listened_seconds
+            for s in platform._sessions
+            if start <= s.timestamp <= end
+        )
+
+        expected_minutes = expected_seconds / 60
+
+        result = platform.total_listening_time_minutes(start, end)
+
+        assert result == expected_minutes
 
 
 # ===========================================================================
@@ -86,7 +103,30 @@ class TestAvgUniqueTracksPremium:
     #       average for premium users. You'll need to count unique tracks
     #       per premium user and calculate the average.
     def test_correct_value(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct average unique tracks per premium user."""
+        days = 30
+        cutoff = datetime.now() - timedelta(days=days)
+
+        premium_users = [
+            user for user in platform._users.values()
+            if isinstance(user, PremiumUser)
+        ]
+
+        assert len(premium_users) > 0  # sanity check
+
+        total = 0
+        for user in premium_users:
+            unique_tracks = {
+                session.track.track_id
+                for session in user.sessions
+                if session.timestamp >= cutoff
+            }
+            total += len(unique_tracks)
+
+        expected = total / len(premium_users) if premium_users else 0.0
+        result = platform.avg_unique_tracks_per_premium_user(days=days)
+
+        assert math.isclose(result, expected, rel_tol=1e-9)
 
 
 # ===========================================================================
@@ -110,8 +150,27 @@ class TestTrackMostDistinctListeners:
     # TODO: Add a test that verifies the correct track is returned.
     #       Count listeners per track from the fixture data.
     def test_correct_track(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify the track with the most distinct listeners is returned."""
+        
+        # Build expected mapping: track_id -> set of unique users
+        expected_counts = {}
 
+        for session in platform._sessions:
+            track_id = session.track.track_id
+            user_id = session.user.user_id
+
+            if track_id not in expected_counts:
+                expected_counts[track_id] = set()
+
+            expected_counts[track_id].add(user_id)
+
+        # Find expected max track
+        max_track_id = max(expected_counts, key=lambda k: len(expected_counts[k]))
+        expected_track = platform._catalogue.get(max_track_id)
+
+        result = platform.track_with_most_distinct_listeners()
+
+        assert result == expected_track
 
 # ===========================================================================
 # Q4 - Average session duration per user subtype, ranked
@@ -142,8 +201,34 @@ class TestAvgSessionDurationByType:
 
     # TODO: Add tests to verify all user types are present and have correct averages.
     def test_all_user_types_present(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify all user types are present and averages are correct."""
 
+        result = platform.avg_session_duration_by_user_type()
+
+        # Build expected mapping from fixture data
+        totals = {}
+        counts = {}
+
+        for session in platform._sessions:
+            user_type = type(session.user).__name__
+            totals[user_type] = totals.get(user_type, 0) + session.duration_listened_seconds
+            counts[user_type] = counts.get(user_type, 0) + 1
+
+        expected = {
+            t: (totals[t] / counts[t]) if counts[t] > 0 else 0.0
+            for t in totals
+        }
+
+        # Check all expected types are present
+        result_types = {t for t, _ in result}
+        assert result_types == set(expected.keys())
+
+        # Check values are correct 
+        result_dict = dict(result)
+
+        for user_type, expected_avg in expected.items():
+            assert user_type in result_dict
+            assert abs(result_dict[user_type] - expected_avg) < 1e-9
 
 # ===========================================================================
 # Q5 - Total listening time for underage sub-users
@@ -171,10 +256,41 @@ class TestUnderageSubUserListening:
 
     # TODO: Add tests for correct values with default and custom thresholds.
     def test_correct_value_default_threshold(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct total listening time for underage users (default <18)."""
+
+        threshold = 18
+
+        total_seconds = 0
+
+        for session in platform._sessions:
+            user = session.user
+
+            if hasattr(user, "age") and user.age < threshold:
+                total_seconds += session.duration_listened_seconds
+
+        expected = total_seconds / 60
+        result = platform.total_listening_time_underage_sub_users_minutes()
+
+        assert abs(result - expected) < 1e-9
+
 
     def test_custom_threshold(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct behavior with a custom age threshold."""
+
+        threshold = 25
+
+        total_seconds = 0
+
+        for session in platform._sessions:
+            user = session.user
+
+            if hasattr(user, "age") and user.age < threshold:
+                total_seconds += session.duration_listened_seconds
+
+        expected = total_seconds / 60
+        result = platform.total_listening_time_underage_sub_users_minutes(age_threshold=threshold)
+
+        assert abs(result - expected) < 1e-9
 
 
 # ===========================================================================
@@ -213,8 +329,37 @@ class TestTopArtistsByListeningTime:
 
     # TODO: Add a test that verifies the correct artists and values.
     def test_top_artist(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct top artists by total listening time."""
 
+        artist_time = {}
+
+        # Recompute expected values from fixture
+        for session in platform._sessions:
+            track = session.track
+
+            if not isinstance(track, Song):
+                continue
+
+            artist_id = track.artist.artist_id
+            artist_time[artist_id] = artist_time.get(artist_id, 0) + session.duration_listened_seconds
+
+        expected = [
+            (platform._artists[aid], secs / 60)
+            for aid, secs in artist_time.items()
+            if aid in platform._artists
+        ]
+
+        expected_sorted = sorted(expected, key=lambda x: x[1], reverse=True)[:5]
+
+        result = platform.top_artists_by_listening_time(n=5)
+
+        # Check length constraint
+        assert len(result) <= 5
+
+        # Check correctness of ordering and values
+        for (res_artist, res_minutes), (exp_artist, exp_minutes) in zip(result, expected_sorted):
+            assert res_artist == exp_artist
+            assert abs(res_minutes - exp_minutes) < 1e-9
 
 # ===========================================================================
 # Q7 - User's top genre and percentage
@@ -250,9 +395,20 @@ class TestUserTopGenre:
 
     # TODO: Add a test that verifies the correct genre and percentage for a known user.
     def test_correct_top_genre(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct top genre and percentage for a known user."""
 
+        user_ids_with_sessions = {
+            s.user.user_id for s in platform._sessions if s.user
+        }
 
+        assert user_ids_with_sessions
+
+        user_id = next(iter(user_ids_with_sessions))
+
+        result = platform.user_top_genre(user_id)
+
+        assert result is not None
+        
 # ===========================================================================
 # Q8 - CollaborativePlaylists with more than threshold distinct artists
 # ===========================================================================
@@ -285,7 +441,53 @@ class TestCollaborativePlaylistsManyArtists:
     # TODO: Add tests that verify the correct playlists are returned with
     #       different threshold values.
     def test_default_threshold(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct playlists returned using default threshold (>3 artists)."""
+
+        threshold = 3
+
+        expected = []
+
+        for playlist in platform._playlists.values():
+            if isinstance(playlist, CollaborativePlaylist):
+                artists = set()
+
+                for track in playlist.tracks:
+                    if isinstance(track, Song):  # only songs count
+                        artists.add(track.artist.artist_id)
+
+                if len(artists) > threshold:
+                    expected.append(playlist)
+
+        expected_sorted = sorted(expected, key=lambda p: p.playlist_id)
+
+        result = platform.collaborative_playlists_with_many_artists()
+
+        assert result == expected_sorted
+
+
+    def test_custom_threshold(self, platform: StreamingPlatform) -> None:
+        """Verify correct playlists are returned for a custom threshold."""
+
+        threshold = 1  # lower threshold to ensure some playlists qualify
+
+        expected = []
+
+        for playlist in platform._playlists.values():
+            if isinstance(playlist, CollaborativePlaylist):
+                artists = set()
+
+                for track in playlist.tracks:
+                    if isinstance(track, Song):
+                        artists.add(track.artist.artist_id)
+
+                if len(artists) > threshold:
+                    expected.append(playlist)
+
+        expected_sorted = sorted(expected, key=lambda p: p.playlist_id)
+
+        result = platform.collaborative_playlists_with_many_artists(threshold=threshold)
+
+        assert result == expected_sorted
 
 
 # ===========================================================================
@@ -313,12 +515,39 @@ class TestAvgTracksPerPlaylistType:
 
     # TODO: Add tests that verify the correct averages for each playlist type.
     def test_standard_playlist_average(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct average track count for standard Playlists."""
 
-    def test_collaborative_playlist_average(
-        self, platform: StreamingPlatform
-    ) -> None:
-        pass
+        total_tracks = 0
+        count = 0
+
+        for playlist in platform._playlists.values():
+            if isinstance(playlist, Playlist) and not isinstance(playlist, CollaborativePlaylist):
+                total_tracks += len(playlist.tracks)
+                count += 1
+
+        expected = (total_tracks / count) if count > 0 else 0.0
+
+        result = platform.avg_tracks_per_playlist_type()
+
+        assert abs(result["Playlist"] - expected) < 1e-9
+
+
+    def test_collaborative_playlist_average(self, platform: StreamingPlatform) -> None:
+        """Verify correct average track count for CollaborativePlaylists."""
+
+        total_tracks = 0
+        count = 0
+
+        for playlist in platform._playlists.values():
+            if isinstance(playlist, CollaborativePlaylist):
+                total_tracks += len(playlist.tracks)
+                count += 1
+
+        expected = (total_tracks / count) if count > 0 else 0.0
+
+        result = platform.avg_tracks_per_playlist_type()
+
+        assert abs(result["CollaborativePlaylist"] - expected) < 1e-9
 
 
 # ===========================================================================
@@ -354,7 +583,65 @@ class TestUsersWhoCompletedAlbums:
 
     # TODO: Add tests that verify the correct users and albums are identified.
     def test_correct_users_identified(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct users are identified as having completed albums."""
+
+        # Build album track mapping
+        albums = {
+            album.title: set(album.track_ids())
+            for album in platform._albums.values()
+            if album.track_ids()
+        }
+
+        expected = []
+
+        for user in platform._users.values():
+            listened = set(user.unique_tracks_listened())
+
+            completed = [
+                title for title, tracks in albums.items()
+                if tracks.issubset(listened)
+            ]
+
+            if completed:
+                expected.append((user, sorted(completed)))
+
+        expected.sort(key=lambda x: x[0].user_id)
+
+        result = platform.users_who_completed_albums()
+
+        # Compare users and structure
+        assert len(result) == len(expected)
+
+        for (res_user, res_albums), (exp_user, exp_albums) in zip(result, expected):
+            assert res_user == exp_user
+            assert res_albums == exp_albums
+
 
     def test_correct_album_titles(self, platform: StreamingPlatform) -> None:
-        pass
+        """Verify correct album titles are assigned to each user."""
+
+        albums = {
+            album.title: set(album.track_ids())
+            for album in platform._albums.values()
+            if album.track_ids()
+        }
+
+        expected = {}
+
+        for user in platform._users.values():
+            listened = set(user.unique_tracks_listened())
+
+            completed = [
+                title for title, tracks in albums.items()
+                if tracks.issubset(listened)
+            ]
+
+            if completed:
+                expected[user.user_id] = sorted(completed)
+
+        result = platform.users_who_completed_albums()
+
+        result_dict = {user.user_id: titles for user, titles in result}
+
+        assert result_dict == expected
+

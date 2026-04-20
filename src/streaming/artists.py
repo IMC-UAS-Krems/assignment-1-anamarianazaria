@@ -15,7 +15,7 @@ class Artist:
         self.albums = []
 
     def add_track(self, track):
-        if track not in self.tracks:
+        if track.track_id not in [t.track_id for t in self.tracks]:
             self.tracks.append(track)
              
     def track_count(self):

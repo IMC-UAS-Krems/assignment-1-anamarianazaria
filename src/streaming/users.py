@@ -28,7 +28,11 @@ class User:
         return self.total_listening_seconds() / 60
     
     def unique_tracks_listened(self):
-        return {session.track.track_id for session in self.sessions}
+        return set(
+            s.track.track_id
+            for s in self.sessions
+            if s.track is not None
+        )
 
 
 class FreeUser(User):

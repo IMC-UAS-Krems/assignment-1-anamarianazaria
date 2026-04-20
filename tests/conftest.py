@@ -65,7 +65,20 @@ def platform() -> StreamingPlatform:
     for user in (alice, bob):
         platform.add_user(user)
 
+    def add_session(pid, user, track, seconds):
+        session = ListeningSession(
+            session_id=pid,
+            user=user,
+            track=track,
+            timestamp=datetime.now(),
+            duration_listened_seconds=seconds
+        )
+        platform.record_session(session)
 
+    add_session("s1", alice, t1, 120)
+    add_session("s2", alice, t2, 150)
+    add_session("s3", bob,   t1, 200)
+ 
     return platform
 
 
